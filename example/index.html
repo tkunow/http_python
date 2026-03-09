@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+    <head lang="De-de">
+        <meta charset="UTF-8">
+        <title>HTTP test</title>
+    </head>
+    <body>
+        <div id="get">
+            <button id="b_get">Hello World!</button>
+        </div>
+    </body>
+    <script>
+        const url = "http://127.0.0.1:80/"
+        const b_get = document.getElementById("b_get");
+
+        b_get.addEventListener("click", () =>{
+            get_fetcht("test").then(ret => {
+                console.log(ret)
+            })
+        })
+
+        async function get_fetcht(address){
+            const new_url = url + address;
+
+            try {
+                const response = await fetch(new_url);
+
+                console.log(response)
+
+                if (!response.ok) {
+                    throw new Error(`Response status: {response.status}`);
+                }
+
+                const result = await response.json();
+                return result;
+            } catch (error){
+                console.error(error.message);
+            }
+        }
+
+    </script>
+</html>
