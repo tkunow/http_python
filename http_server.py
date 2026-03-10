@@ -2,6 +2,9 @@ import asyncio
 import logging
 from enum import Enum
 from typing import NamedTuple
+from dataclasses import dataclass
+
+import json
 
 type Address = tuple[str, int]
 
@@ -36,23 +39,6 @@ class Request_Line(NamedTuple):
     Request_URI:str
     HTTP_Version:str
 
-class RequestHeader(NamedTuple):
-    Request:Request_Line
-    Host:str
-    Connection:str
-    sec_ch_ua_platform:str
-    User_Agent:str
-    sec_ch_ua:str
-    sec_ch_ua_mobile:str
-    Accept:str
-    Origin:str
-    Sec_Fetch_Site:str
-    Sec_Fetch_Mode:str
-    Sec_Fetch_Dest:str
-    Referer:str
-    Accept_Encoding:str
-    Accept_Language:str
-
 class DebugLevel(Enum):
     INFO=1
     DEBUG=2
@@ -76,9 +62,19 @@ class HttpRequestHandler:
             except asyncio.CancelledError:
                 pass
     async def connection_handler(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        await self.accept_handshake(reader, writer)
+        details = await self.accept_handshake(reader, writer)
 
-    async def accept_handshake(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+
+        if details["Request_Line"].Methode == Methode.GET.value:
+            # Test send Message
+            message_body = json.dumps({"data": "Hello World!"})
+            await self.Get(writer, message_body, details, 200, "OK")
+        else:
+            logging.warning("Methode not allowed: %s", details["Request_Line"].Methode)
+
+        await self.disconnect(writer)
+
+    async def accept_handshake(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> dict:
         logging.info("new connection from > %s", writer.get_extra_info('peername'))
 
         data = await reader.read(1024)
@@ -88,8 +84,27 @@ class HttpRequestHandler:
         header_data.update({"Request_Line": request_line})
         for line in headers:
             [header_data.update({item.value: line.split(": ")[1]}) for item in RequestTypes if not line.find(f"{item.value}:")]
-
         logging.info(header_data)
+        
+        return header_data
+
+    async def Get(self, writer: asyncio.StreamWriter, message:str, header: dict, status_code: int, reason_phrase: str) -> None:
+        status_line = f"{header["Request_Line"].HTTP_Version} {status_code} {reason_phrase}\r\n"
+        logging.info("send response: %s", status_line)
+
+        cors = f"Access-Control-Allow-Origin: {header["Origin"]}"
+
+        
+        response = (status_line + cors + "\r\n\r\n" + message).encode()
+
+        writer.write(response)
+        await writer.drain()
+
+    async def disconnect(self, writer: asyncio.StreamWriter) -> None:
+        logging.info("close connection: %s", writer.get_extra_info("peername"))
+        writer.close()
+        await writer.wait_closed()
+
 if __name__ == "__main__":
     http_server = HttpRequestHandler(["127.0.0.1", "80"], DebugLevel.INFO)
 
