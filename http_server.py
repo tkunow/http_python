@@ -2,9 +2,6 @@ import asyncio
 import logging
 from enum import Enum
 from typing import NamedTuple
-from dataclasses import dataclass
-
-import json
 
 type Address = tuple[str, int]
 
@@ -49,32 +46,50 @@ class HttpRequestHandler:
     def __init__(self, address: Address, debug: DebugLevel | None = None) -> None:
         self.address = address
         self.server = None
+        self.routes = {}
         if debug is not None:
             logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 
-    async def start(self):
+    async def start(self) -> None:
         logging.info("start socket: %s", self.address)
-        self.server = await asyncio.start_server(self.connection_handler, self.address[0], self.address[1])
+        self.server = await asyncio.start_server(self._connection_handler, self.address[0], self.address[1])
 
         async with self.server:
             try:
                 await self.server.serve_forever()
             except asyncio.CancelledError:
                 pass
-    async def connection_handler(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        details = await self.accept_handshake(reader, writer)
+        
+    async def close(self) -> None:
+        logging.info("close socket")
+        self.server.close()
+        await self.server.wait_closed()
 
+    async def _connection_handler(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        details = await self._accept_handshake(reader, writer)
+
+        status_line = f"{details["Request_Line"].HTTP_Version} 200 OK\r\n"
+        cors = f"Access-Control-Allow-Origin: {details["Origin"]}"
+
+        logging.info("routes: %s", self.routes)
 
         if details["Request_Line"].Methode == Methode.GET.value:
-            # Test send Message
-            message_body = json.dumps({"data": "Hello World!"})
-            await self.Get(writer, message_body, details, 200, "OK")
+
+            try:
+                message = self.routes[details["Request_Line"].Request_URI]
+                response = (status_line + cors + "\r\n\r\n" + message).encode()
+                writer.write(response)
+                await writer.drain()
+
+                logging.info("send response: %s", status_line)
+            except KeyError as e:
+                logging.error("unknown route: %s", e)
         else:
             logging.warning("Methode not allowed: %s", details["Request_Line"].Methode)
 
-        await self.disconnect(writer)
+        await self._disconnect(writer)
 
-    async def accept_handshake(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> dict:
+    async def _accept_handshake(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> dict:
         logging.info("new connection from > %s", writer.get_extra_info('peername'))
 
         data = await reader.read(1024)
@@ -85,27 +100,17 @@ class HttpRequestHandler:
         for line in headers:
             [header_data.update({item.value: line.split(": ")[1]}) for item in RequestTypes if not line.find(f"{item.value}:")]
         logging.info(header_data)
-        
+
         return header_data
 
-    async def Get(self, writer: asyncio.StreamWriter, message:str, header: dict, status_code: int, reason_phrase: str) -> None:
-        status_line = f"{header["Request_Line"].HTTP_Version} {status_code} {reason_phrase}\r\n"
-        logging.info("send response: %s", status_line)
+    def get(self, route:str) -> None:
+        def get_decorator(func: callable):
+            self.routes.update({route: func()})
+            return func
+        return get_decorator
 
-        cors = f"Access-Control-Allow-Origin: {header["Origin"]}"
 
-        
-        response = (status_line + cors + "\r\n\r\n" + message).encode()
-
-        writer.write(response)
-        await writer.drain()
-
-    async def disconnect(self, writer: asyncio.StreamWriter) -> None:
+    async def _disconnect(self, writer: asyncio.StreamWriter) -> None:
         logging.info("close connection: %s", writer.get_extra_info("peername"))
         writer.close()
         await writer.wait_closed()
-
-if __name__ == "__main__":
-    http_server = HttpRequestHandler(["127.0.0.1", "80"], DebugLevel.INFO)
-
-    asyncio.run(http_server.start())
