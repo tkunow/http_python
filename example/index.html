@@ -7,19 +7,56 @@
     <body>
         <div id="get">
             <button id="b_get">Hello World!</button>
+            <button id="b_inline">Server updaten</button>
+            <button id="b_post">POST</button>
         </div>
+        <div id="s_message"></div>
     </body>
     <script>
         const url = "http://127.0.0.1:80/"
         const b_get = document.getElementById("b_get");
+        const b_inline = document.getElementById("b_inline")
+        const b_post = document.getElementById("b_post")
 
-        b_get.addEventListener("click", () =>{
-            get_fetcht("test").then(ret => {
+        b_post.addEventListener("click", () =>{
+            post_fetch("test").then(ret => {
                 console.log(ret)
             })
         })
 
-        async function get_fetcht(address){
+        b_get.addEventListener("click", () =>{
+            get_fetch("test").then(ret => {
+                console.log(ret)
+            })
+        })
+        b_inline.addEventListener("click", () =>{
+            get_fetch("inlinehtml").then(ret => {
+                document.getElementById("s_message").innerHTML += ret + "\n"
+            })
+        })
+
+        async function post_fetch(address) {
+            const new_url = url + address;
+            try {
+                const response = await fetch(new_url, {
+                    method: "POST",
+                    body: JSON.stringify({"client": "send from client"})
+                })
+
+                console.log(response)
+
+                if (!response.ok) {
+                    throw new Error(`Response status: {response.status}`);
+                }
+
+                const result = await response.text();
+                return result;
+            } catch (error){
+                console.error(error.message);
+            }
+        }
+
+        async function get_fetch(address){
             const new_url = url + address;
 
             try {
@@ -31,7 +68,7 @@
                     throw new Error(`Response status: {response.status}`);
                 }
 
-                const result = await response.json();
+                const result = await response.text();
                 return result;
             } catch (error){
                 console.error(error.message);
