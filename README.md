@@ -14,6 +14,7 @@ async def main():
         return "<p>Hello World!</p>"
     @app.post("/test")
     def hello_wold_post():
+        print(request.get())
         return json.dumps({"data": "post succeeded"})
 
     try:
