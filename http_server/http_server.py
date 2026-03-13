@@ -3,6 +3,7 @@ import logging
 from enum import Enum
 from typing import NamedTuple
 import contextvars
+from collections.abc import Callable
 
 type Address = tuple[str, int]
 
@@ -70,7 +71,7 @@ class HttpRequestHandler:
         self.server.close()
         await self.server.wait_closed()
 
-    async def _connection_handler(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _connection_handler(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> Callable:
         details = await self._accept_handshake(reader, writer)
         request.set(details)
 
@@ -79,16 +80,25 @@ class HttpRequestHandler:
 
         try:
             if details["Request_Line"].Methode == Methode.GET.value:
-                await self._response(writer, details)
+                func = self.routes["GET"].get(details["Request_Line"].Request_URI)
+                ret = func()
+                await self._response(writer, details, ret)
+
+                await self._disconnect(writer)
+                logging.debug("return Methode: %s", ret)
+                return ret
             elif details["Request_Line"].Methode == Methode.POST.value:
                 func = self.routes["POST"].get(details["Request_Line"].Request_URI)
                 request.set(details["Message_Body"])
 
-                await self._response(writer, details)
+                ret = func()
+
+                await self._response(writer, details, ret)
                 # logging.debug("post: %s", details["Message_Body"])
 
                 await self._disconnect(writer)
-                return func()
+                logging.debug("return Methode: %s", ret)
+                return ret
             else:
                 logging.warning("Methode not allowed: %s", details["Request_Line"].Methode)
         except KeyError as e:
@@ -100,11 +110,10 @@ class HttpRequestHandler:
 
         await self._disconnect(writer)
 
-    async def _response(self, writer: asyncio.StreamWriter, details: dict) -> None:
+    async def _response(self, writer: asyncio.StreamWriter, details: dict, message:str) -> None:
         status_line = f"{details["Request_Line"].HTTP_Version} 200 OK\r\n"
         cors = f"Access-Control-Allow-Origin: {details["Origin"]}"
 
-        message = details["Message_Body"]
         response = (status_line + cors + "\r\n" f"Content-Length: {len(message)}" + "\r\n\r\n" + message).encode()
         writer.write(response)
         await writer.drain()
@@ -131,15 +140,15 @@ class HttpRequestHandler:
 
         return header_data
 
-    def get(self, route:str) -> None:
-        def get_decorator(func: callable):
+    def get(self, route:str) -> Callable:
+        def get_decorator(func: Callable):
             # self.get_routes.update({route: func()})
             self.routes["GET"].update({route: func})
             return func
         return get_decorator
 
-    def post(self, route:str) -> None:
-        def post_decorator(func: callable):
+    def post(self, route:str) -> Callable:
+        def post_decorator(func: Callable):
             # self.post_routes.update({route: func()})
             self.routes["POST"].update({route: func})
             return func

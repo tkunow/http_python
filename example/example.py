@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from http_server import HttpRequestHandler, request, DebugLevel
+from http_server.http_server import HttpRequestHandler, request, DebugLevel
 import asyncio
 import json
 
