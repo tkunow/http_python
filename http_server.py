@@ -2,6 +2,7 @@ import asyncio
 import logging
 from enum import Enum
 from typing import NamedTuple
+import contextvars
 
 type Address = tuple[str, int]
 
@@ -42,12 +43,13 @@ class DebugLevel(Enum):
     WARNING=3
     ERROR=4
 
+request = contextvars.ContextVar('client')
+
 class HttpRequestHandler:
     def __init__(self, address: Address, debug: DebugLevel | None = None) -> None:
         self.address = address
         self.server = None
-        self.get_routes = {}
-        self.post_routes = {}
+        self.routes = {"GET": {}, "POST": {}}
         if debug is DebugLevel.INFO:
             logging.basicConfig(format='[%(asctime)s] %(message)s', level=logging.INFO, datefmt='%Y/%m/%d %I:%M:%S')
         elif debug is DebugLevel.DEBUG:
@@ -70,17 +72,23 @@ class HttpRequestHandler:
 
     async def _connection_handler(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         details = await self._accept_handshake(reader, writer)
+        request.set(details)
 
 
-        logging.debug("GET routes: %s", self.get_routes)
-        logging.debug("POST routes: %s", self.post_routes)
+        logging.debug("routes: %s", self.routes)
 
         try:
             if details["Request_Line"].Methode == Methode.GET.value:
-                await self._response(writer, details, self.get_routes)
+                await self._response(writer, details)
             elif details["Request_Line"].Methode == Methode.POST.value:
-                logging.debug("post: %s", details["Message_Body"])
-                await self._response(writer, details, self.post_routes)
+                func = self.routes["POST"].get(details["Request_Line"].Request_URI)
+                request.set(details["Message_Body"])
+
+                await self._response(writer, details)
+                # logging.debug("post: %s", details["Message_Body"])
+
+                await self._disconnect(writer)
+                return func()
             else:
                 logging.warning("Methode not allowed: %s", details["Request_Line"].Methode)
         except KeyError as e:
@@ -92,11 +100,11 @@ class HttpRequestHandler:
 
         await self._disconnect(writer)
 
-    async def _response(self, writer: asyncio.StreamWriter, details: dict, routes:dict) -> None:
+    async def _response(self, writer: asyncio.StreamWriter, details: dict) -> None:
         status_line = f"{details["Request_Line"].HTTP_Version} 200 OK\r\n"
         cors = f"Access-Control-Allow-Origin: {details["Origin"]}"
 
-        message = routes[details["Request_Line"].Request_URI]
+        message = details["Message_Body"]
         response = (status_line + cors + "\r\n" f"Content-Length: {len(message)}" + "\r\n\r\n" + message).encode()
         writer.write(response)
         await writer.drain()
@@ -125,13 +133,15 @@ class HttpRequestHandler:
 
     def get(self, route:str) -> None:
         def get_decorator(func: callable):
-            self.get_routes.update({route: func()})
+            # self.get_routes.update({route: func()})
+            self.routes["GET"].update({route: func})
             return func
         return get_decorator
 
     def post(self, route:str) -> None:
         def post_decorator(func: callable):
-            self.post_routes.update({route: func()})
+            # self.post_routes.update({route: func()})
+            self.routes["POST"].update({route: func})
             return func
         return post_decorator
 
